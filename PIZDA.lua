@@ -252,25 +252,21 @@ local function ensureGui()
 end
 
 local function pointerPos(input)
-	-- One coordinate space for the whole drag: screen pixels from the top-left
-	-- of the game window. Mouse always uses GetMouseLocation (same source for
-	-- press and move). Touch uses the same InputObject for the whole gesture.
 	if input and input.UserInputType==TouchIn then
-		return Vector2.new(input.Position.X,input.Position.Y)+GuiService:GetGuiInset()
+		return Vector2.new(input.Position.X,input.Position.Y)
 	end
 	return UserInputService:GetMouseLocation()
 end
 
 local function absPointer(input)
-	-- GuiObject.AbsolutePosition is CoreUISafeInsets space (origin below the topbar).
-	return pointerPos(input)-GuiService:GetGuiInset()
+	if input and input.UserInputType==TouchIn then
+		return Vector2.new(input.Position.X,input.Position.Y)
+	end
+	return UserInputService:GetMouseLocation()-GuiService:GetGuiInset()
 end
 
-local function localXY(inst)
-	local parent=inst.Parent
-	local size=parent and parent.AbsoluteSize/uiScale or viewport()/uiScale
-	local p=inst.Position
-	return Vector2.new(p.X.Scale*size.X+p.X.Offset,p.Y.Scale*size.Y+p.Y.Offset),size
+local function dragDelta(input,start)
+	return (pointerPos(input)-start)/uiScale
 end
 
 local drags={}
@@ -307,14 +303,20 @@ local function makeDraggable(handle,target,onFinish,margin)
 	handle.InputBegan:Connect(function(input)
 		if input.UserInputType~=MouseBtn and input.UserInputType~=TouchIn then return end
 		local startPointer=pointerPos(input)
-		local origin,bounds=localXY(target)
+		local startPos=target.Position
 		local moved=false
 		startDrag(input,function(i)
-			local visual=pointerPos(i)-startPointer
-			if visual.Magnitude>5 then moved=true end
+			local pixel=pointerPos(i)-startPointer
+			if pixel.Magnitude>3 then moved=true end
 			if not moved then return end
-			local delta=visual/uiScale
-			target.Position=UDim2.fromOffset(clamp(origin.X+delta.X,margin,math.max(margin,bounds.X-margin)),clamp(origin.Y+delta.Y,margin,math.max(margin,bounds.Y-margin)))
+			local d=pixel/uiScale
+			local parent=target.Parent
+			local bounds=parent and parent.AbsoluteSize/uiScale or viewport()/uiScale
+			local x=startPos.X.Scale*bounds.X+startPos.X.Offset+d.X
+			local y=startPos.Y.Scale*bounds.Y+startPos.Y.Offset+d.Y
+			x=clamp(x,margin,math.max(margin,bounds.X-margin))
+			y=clamp(y,margin,math.max(margin,bounds.Y-margin))
+			target.Position=UDim2.new(startPos.X.Scale,x-startPos.X.Scale*bounds.X,startPos.Y.Scale,y-startPos.Y.Scale*bounds.Y)
 		end,function()
 			if onFinish then onFinish(moved) end
 		end)
@@ -1880,13 +1882,13 @@ function Prism:CreateWindow(cfg)
 			if win.Fullscreen then return end
 			local startPointer=pointerPos(input)
 			local startSize=Vector2.new(holder.Size.X.Offset,holder.Size.Y.Offset)
-			local startCenter=select(1,localXY(holder))
+			local startPos=holder.Position
 			startDrag(input,function(i)
-				local delta=(pointerPos(i)-startPointer)/uiScale
+				local delta=dragDelta(i,startPointer)
 				local ns=Vector2.new(clamp(startSize.X+delta.X,minSize.X,maxSize.X),clamp(startSize.Y+delta.Y,minSize.Y,maxSize.Y))
 				local shift=(ns-startSize)/2
 				holder.Size=UDim2.fromOffset(ns.X,ns.Y)
-				holder.Position=UDim2.fromOffset(startCenter.X+shift.X,startCenter.Y+shift.Y)
+				holder.Position=UDim2.new(startPos.X.Scale,startPos.X.Offset+shift.X,startPos.Y.Scale,startPos.Y.Offset+shift.Y)
 			end,function()
 				if not cfg.UIScale then fitScale() end
 			end)
