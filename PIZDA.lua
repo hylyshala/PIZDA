@@ -235,6 +235,10 @@ local function ensureGui()
 	gui.ZIndexBehavior=Enum.ZIndexBehavior.Sibling
 	gui.DisplayOrder=2000
 	pcall(function()
+		gui.ScreenInsets=Enum.ScreenInsets.None
+		gui.ClipToDeviceSafeArea=false
+	end)
+	pcall(function()
 		if protectgui then protectgui(gui) elseif syn and syn.protect_gui then syn.protect_gui(gui) end
 	end)
 	gui.Parent=guiParent()
@@ -248,8 +252,25 @@ local function ensureGui()
 end
 
 local function pointerPos(input)
-	local inset=GuiService:GetGuiInset()
-	return Vector2.new(input.Position.X+inset.X,input.Position.Y+inset.Y)
+	-- One coordinate space for the whole drag: screen pixels from the top-left
+	-- of the game window. Mouse always uses GetMouseLocation (same source for
+	-- press and move). Touch uses the same InputObject for the whole gesture.
+	if input and input.UserInputType==TouchIn then
+		return Vector2.new(input.Position.X,input.Position.Y)+GuiService:GetGuiInset()
+	end
+	return UserInputService:GetMouseLocation()
+end
+
+local function absPointer(input)
+	-- GuiObject.AbsolutePosition is CoreUISafeInsets space (origin below the topbar).
+	return pointerPos(input)-GuiService:GetGuiInset()
+end
+
+local function localXY(inst)
+	local parent=inst.Parent
+	local size=parent and parent.AbsoluteSize/uiScale or viewport()/uiScale
+	local p=inst.Position
+	return Vector2.new(p.X.Scale*size.X+p.X.Offset,p.Y.Scale*size.Y+p.Y.Offset),size
 end
 
 local drags={}
@@ -286,14 +307,14 @@ local function makeDraggable(handle,target,onFinish,margin)
 	handle.InputBegan:Connect(function(input)
 		if input.UserInputType~=MouseBtn and input.UserInputType~=TouchIn then return end
 		local startPointer=pointerPos(input)
-		local center=(target.AbsolutePosition+target.AbsoluteSize*target.AnchorPoint)/uiScale
+		local origin,bounds=localXY(target)
 		local moved=false
 		startDrag(input,function(i)
-			local delta=(pointerPos(i)-startPointer)/uiScale
-			if delta.Magnitude>5 then moved=true end
+			local visual=pointerPos(i)-startPointer
+			if visual.Magnitude>5 then moved=true end
 			if not moved then return end
-			local vp=viewport()/uiScale
-			target.Position=UDim2.fromOffset(clamp(center.X+delta.X,margin,vp.X-margin),clamp(center.Y+delta.Y,margin,vp.Y-margin))
+			local delta=visual/uiScale
+			target.Position=UDim2.fromOffset(clamp(origin.X+delta.X,margin,math.max(margin,bounds.X-margin)),clamp(origin.Y+delta.Y,margin,math.max(margin,bounds.Y-margin)))
 		end,function()
 			if onFinish then onFinish(moved) end
 		end)
@@ -304,9 +325,10 @@ local function openPopup(anchor,width,height,build,onClose)
 	ensureGui()
 	local closed=false
 	local catcher=create("TextButton",{Size=UDim2.fromScale(1,1),BackgroundTransparency=1,Parent=layers.overlay})
-	local ap=anchor.AbsolutePosition/uiScale
+	local origin=layers.overlay.AbsolutePosition
+	local ap=(anchor.AbsolutePosition-origin)/uiScale
 	local as=anchor.AbsoluteSize/uiScale
-	local vp=viewport()/uiScale
+	local vp=layers.overlay.AbsoluteSize/uiScale
 	local x=clamp(ap.X+as.X-width,8,math.max(8,vp.X-width-8))
 	local below=ap.Y+as.Y+6
 	local flip=below+height>vp.Y-8 and ap.Y-6-height>8
@@ -681,7 +703,7 @@ Elements.Slider=function(ctx,cfg)
 		local scroller=row:FindFirstAncestorOfClass("ScrollingFrame")
 		if scroller then scroller.ScrollingEnabled=false end
 		local function update(i)
-			local rel=clamp((pointerPos(i).X-bar.AbsolutePosition.X)/math.max(bar.AbsoluteSize.X,1),0,1)
+			local rel=clamp((absPointer(i).X-bar.AbsolutePosition.X)/math.max(bar.AbsoluteSize.X,1),0,1)
 			el:Set(min+rel*(max-min))
 		end
 		update(input)
@@ -895,7 +917,7 @@ local function dragArea(frame,apply)
 	frame.InputBegan:Connect(function(input)
 		if input.UserInputType~=MouseBtn and input.UserInputType~=TouchIn then return end
 		local function upd(i)
-			local p=pointerPos(i)
+			local p=absPointer(i)
 			apply(clamp((p.X-frame.AbsolutePosition.X)/math.max(frame.AbsoluteSize.X,1),0,1),clamp((p.Y-frame.AbsolutePosition.Y)/math.max(frame.AbsoluteSize.Y,1),0,1))
 		end
 		upd(input)
@@ -1858,7 +1880,7 @@ function Prism:CreateWindow(cfg)
 			if win.Fullscreen then return end
 			local startPointer=pointerPos(input)
 			local startSize=Vector2.new(holder.Size.X.Offset,holder.Size.Y.Offset)
-			local startCenter=(holder.AbsolutePosition+holder.AbsoluteSize*holder.AnchorPoint)/uiScale
+			local startCenter=select(1,localXY(holder))
 			startDrag(input,function(i)
 				local delta=(pointerPos(i)-startPointer)/uiScale
 				local ns=Vector2.new(clamp(startSize.X+delta.X,minSize.X,maxSize.X),clamp(startSize.Y+delta.Y,minSize.Y,maxSize.Y))
