@@ -508,6 +508,10 @@ end
 
 local function makeDraggable(handle,target,onFinish,margin)
 	margin=margin or 20
+	local function edge()
+		if type(margin)=="table" then return margin[1] or 20 end
+		return margin
+	end
 	handle.InputBegan:Connect(function(input)
 		if input.UserInputType~=MouseBtn and input.UserInputType~=TouchIn then return end
 		local startPointer=pointerPos(input)
@@ -522,8 +526,9 @@ local function makeDraggable(handle,target,onFinish,margin)
 			local bounds=parent and parent.AbsoluteSize/uiScale or viewport()/uiScale
 			local x=startPos.X.Scale*bounds.X+startPos.X.Offset+d.X
 			local y=startPos.Y.Scale*bounds.Y+startPos.Y.Offset+d.Y
-			x=clamp(x,margin,math.max(margin,bounds.X-margin))
-			y=clamp(y,margin,math.max(margin,bounds.Y-margin))
+			local pad=edge()
+			x=clamp(x,pad,math.max(pad,bounds.X-pad))
+			y=clamp(y,pad,math.max(pad,bounds.Y-pad))
 			target.Position=UDim2.new(startPos.X.Scale,x-startPos.X.Scale*bounds.X,startPos.Y.Scale,y-startPos.Y.Scale*bounds.Y)
 		end,function()
 			if onFinish then onFinish(moved) end
@@ -2120,6 +2125,18 @@ local function isCompact()
 	return (UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled) or vp.X<760
 end
 
+local ButtonStyles={}
+local function addButtonStyle(name,spec)
+	spec=spec or {}
+	local out={}
+	for k,v in pairs(spec)do out[k]=v end
+	out.Name=name
+	ButtonStyles[name]=out
+	return out
+end
+addButtonStyle("Orb",{Shape="Circle",Size=48,CompactSize=54,TextSize=22,CompactTextSize=24,Background="Accent",Text="AccentText",Stroke=true,StrokeColor=Color3.new(1,1,1),StrokeThickness=2,StrokeTransparency=0.55,Gradient=true,GradientRotation=45})
+addButtonStyle("Square",{Shape="Rounded",Size=46,CompactSize=52,Corner=8,TextSize=18,CompactTextSize=20,Background="Accent",Text="AccentText",Stroke=true,StrokeColor="AccentText",StrokeThickness=1.5,StrokeTransparency=0.2,Gradient=false})
+
 function Prism:CreateWindow(cfg)
 	cfg=cfg or {}
 	ensureGui()
@@ -2269,10 +2286,62 @@ function Prism:CreateWindow(cfg)
 	end
 
 	local tbCfg=cfg.ToggleButton or {}
-	local tbSize=compact and 54 or 48
-	local toggle=create("TextButton",{Name="ToggleButton",AnchorPoint=Vector2.new(0.5,0.5),Position=tbCfg.Position or UDim2.new(0.5,0,0,compact and 36 or 34),Size=UDim2.fromOffset(tbSize,tbSize),Theme={BackgroundColor3="Accent"},Visible=tbCfg.Visible~=false,Parent=layers.float},{corner(tbSize/2),create("UIStroke",{Color=Color3.new(1,1,1),Thickness=2,Transparency=0.55}),create("UIGradient",{Color=ColorSequence.new(Color3.new(1,1,1),Color3.fromRGB(190,190,190)),Rotation=45})})
+	local openMargin={24}
+	local toggle=create("TextButton",{Name="ToggleButton",AnchorPoint=Vector2.new(0.5,0.5),Position=tbCfg.Position or UDim2.new(0.5,0,0,compact and 36 or 34),Size=UDim2.fromOffset(48,48),Theme={BackgroundColor3="Accent"},Visible=tbCfg.Visible~=false,Parent=layers.float})
+	local openCorner=corner(24)
+	openCorner.Name="OpenCorner"
+	openCorner.Parent=toggle
+	local openStroke=create("UIStroke",{Name="OpenStroke",Color=Color3.new(1,1,1),Thickness=2,Transparency=0.55,ApplyStrokeMode=Enum.ApplyStrokeMode.Border,Parent=toggle})
+	local openSheen=create("UIGradient",{Name="OpenSheen",Color=ColorSequence.new(Color3.new(1,1,1),Color3.fromRGB(190,190,190)),Rotation=45,Parent=toggle})
 	local tbScale=create("UIScale",{Scale=1,Parent=toggle})
-	local letter=label(string.upper(tbCfg.Letter or string.sub(win.Title,1,1)),compact and 24 or 22,WBold,"AccentText",{Size=UDim2.fromScale(1,1),TextXAlignment=XCenter,Rotation=0,Parent=toggle})
+	local letter=label(string.upper(tbCfg.Letter or string.sub(win.Title,1,1)),22,WBold,"AccentText",{Size=UDim2.fromScale(1,1),TextXAlignment=XCenter,Rotation=0,Parent=toggle})
+	local function styleColor(value,fallback)
+		if typeof(value)=="Color3" then return value end
+		if type(value)=="string" and currentTheme and typeof(currentTheme[value])=="Color3" then return currentTheme[value] end
+		return fallback
+	end
+	local function applyOpenStyle(name)
+		local style=ButtonStyles[name or ""] or ButtonStyles.Orb
+		if not style then return false end
+		win.ButtonStyle=style.Name
+		local width=compact and (style.CompactWidth or style.Width) or style.Width
+		local height=compact and (style.CompactHeight or style.Height) or style.Height
+		local size=compact and (style.CompactSize or style.Size) or style.Size or 48
+		width=width or size
+		height=height or size
+		toggle.Size=UDim2.fromOffset(width,height)
+		openMargin[1]=math.max(width,height)/2
+		local shape=style.Shape or "Circle"
+		local radius=height/2
+		if shape=="Square" then radius=style.Corner or 4
+		elseif shape=="Rounded" then radius=style.Corner or 10
+		elseif shape=="Circle" then radius=math.min(width,height)/2 end
+		openCorner.CornerRadius=UDim.new(0,radius)
+		local bg=style.Background or "Accent"
+		if typeof(bg)=="Color3" then unbind(toggle,"BackgroundColor3") toggle.BackgroundColor3=bg else bind(toggle,"BackgroundColor3",bg) end
+		local textKey=style.Text or "AccentText"
+		if typeof(textKey)=="Color3" then unbind(letter,"TextColor3") letter.TextColor3=textKey else bind(letter,"TextColor3",textKey) end
+		local caption=tbCfg.Letter or style.Letter
+		if caption==nil and style.ShowTitle then caption=win.Title end
+		if caption==nil then caption=string.sub(win.Title,1,1) end
+		letter.Text=style.Upper==false and tostring(caption) or string.upper(tostring(caption))
+		letter.TextSize=compact and (style.CompactTextSize or style.TextSize or 20) or (style.TextSize or 22)
+		openStroke.Enabled=style.Stroke~=false
+		openStroke.Thickness=style.StrokeThickness or 2
+		openStroke.Transparency=style.StrokeTransparency or 0.55
+		local strokeColor=styleColor(style.StrokeColor,Color3.new(1,1,1))
+		if type(style.StrokeColor)=="string" and currentTheme and currentTheme[style.StrokeColor] then
+			bind(openStroke,"Color",style.StrokeColor)
+		else
+			unbind(openStroke,"Color")
+			openStroke.Color=strokeColor
+		end
+		openSheen.Enabled=style.Gradient~=false
+		if type(style.GradientRotation)=="number" then openSheen.Rotation=style.GradientRotation end
+		if style.GradientColors then openSheen.Color=style.GradientColors end
+		return true
+	end
+	applyOpenStyle(cfg.ButtonStyle or tbCfg.Style or tbCfg.ButtonStyle or "Orb")
 	toggle.MouseEnter:Connect(function()tween(tbScale,0.15,{Scale=1.1})end)
 	toggle.MouseLeave:Connect(function()tween(tbScale,0.15,{Scale=1})end)
 	toggle.InputBegan:Connect(function(i)
@@ -2283,8 +2352,9 @@ function Prism:CreateWindow(cfg)
 	end)
 	makeDraggable(toggle,toggle,function(moved)
 		if not moved then win:Toggle() end
-	end,tbSize/2)
+	end,openMargin)
 	win.ToggleButton=toggle
+	function win:SetButtonStyle(name)return applyOpenStyle(name)end
 
 	function win:Open()
 		if self.Destroyed or not self.Closed then return end
@@ -2321,6 +2391,7 @@ function Prism:CreateWindow(cfg)
 	function win:SetToCenter()tween(holder,0.4,{Position=UDim2.fromScale(0.5,0.5)})end
 	function win:EditToggleButton(c)
 		c=c or {}
+		if c.Style or c.ButtonStyle then applyOpenStyle(c.Style or c.ButtonStyle) end
 		if c.Letter then letter.Text=string.upper(c.Letter) end
 		if c.Visible~=nil then toggle.Visible=c.Visible end
 		if c.Position then toggle.Position=c.Position end
@@ -2448,6 +2519,18 @@ function Prism:AddTheme(t)
 	end
 	return addTheme(t.Name,base)
 end
+
+function Prism:AddButtonStyle(spec)
+	if type(spec)~="table" or not spec.Name then return nil end
+	return addButtonStyle(spec.Name,spec)
+end
+function Prism:GetButtonStyles()
+	local names={}
+	for name in pairs(ButtonStyles)do table.insert(names,name) end
+	table.sort(names)
+	return names
+end
+function Prism:GetButtonStyle(name)return ButtonStyles[name]end
 
 function Prism:GetElement(name)
 	for _,w in ipairs(Prism.Windows)do
