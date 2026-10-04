@@ -514,6 +514,19 @@ local function setRemoteImage(target,url,name)
 	end)
 end
 
+local function caseFallback(obj)
+	return setmetatable(obj,{__index=function(t,k)
+		if type(k)~="string" then return nil end
+		local lk=string.lower(k)
+		for name,v in pairs(t)do
+			if type(name)=="string" and type(v)=="function" and string.lower(name)==lk then
+				return v
+			end
+		end
+		return nil
+	end})
+end
+
 local Elements={}
 
 local function newRow(ctx,cfg,opt)
@@ -534,7 +547,7 @@ local function newRow(ctx,cfg,opt)
 	if rightW>0 then
 		right=create("Frame",{BackgroundTransparency=1,AnchorPoint=Vector2.new(1,0.5),Position=UDim2.new(1,0,0.5,0),Size=flexRight and UDim2.new(0.5,-6,0,opt.rightHeight or 30) or UDim2.fromOffset(rightW,opt.rightHeight or 30),Parent=inner})
 	end
-	local el={Row=row,Inner=inner,Left=left,Right=right,TitleLabel=title,DescLabel=desc,Title=cfg.Title or "",Desc=cfg.Desc,Locked=false,Kind=opt.kind,Flag=cfg.Flag}
+	local el=caseFallback({Row=row,Inner=inner,Left=left,Right=right,TitleLabel=title,DescLabel=desc,Title=cfg.Title or "",Desc=cfg.Desc,Locked=false,Kind=opt.kind,Flag=cfg.Flag})
 	local lockFrame
 	function el:SetTitle(t)
 		t=t==nil and "" or tostring(t)
@@ -630,7 +643,7 @@ local function newRow(ctx,cfg,opt)
 end
 
 local function plainElement(frame)
-	local el={Row=frame}
+	local el=caseFallback({Row=frame})
 	function el:SetVisible(v)
 		frame.Visible=v and true or false
 		local c=self.Container
@@ -1679,6 +1692,21 @@ local function attach(container)
 			return el
 		end
 	end
+	function container:GetElement(name)
+		local win=self.Window
+		if win and win.Flags and win.Flags[name] then return win.Flags[name] end
+		local function search(c)
+			for _,e in ipairs(c.Elements or {})do
+				if e.Flag==name or e.Title==name then return e end
+				if e.Elements then
+					local r=search(e)
+					if r then return r end
+				end
+			end
+			return nil
+		end
+		return search(self)
+	end
 	function container:LockAll()for _,e in ipairs(self.Elements)do if e.Lock then e:Lock()end end end
 	function container:UnlockAll()for _,e in ipairs(self.Elements)do if e.Unlock then e:Unlock()end end end
 end
@@ -2111,6 +2139,15 @@ function Prism:CreateWindow(cfg)
 	function win:UnlockAll()for _,e in pairs(self.Flags)do if e.Unlock then e:Unlock()end end for _,t in ipairs(self.Tabs)do t:UnlockAll()end end
 	function win:GetFlag(name)return self.Flags[name]end
 	function win:Flag(name)return self.Flags[name]end
+	function win:GetElement(name)
+		local e=self.Flags[name]
+		if e then return e end
+		for _,t in ipairs(self.Tabs)do
+			local r=t:GetElement(name)
+			if r then return r end
+		end
+		return nil
+	end
 	function win:SetFlagTitle(name,t)
 		local e=self.Flags[name]
 		if e and e.SetTitle then e:SetTitle(t) end
@@ -2213,6 +2250,13 @@ function Prism:AddTheme(t)
 	return addTheme(t.Name,base)
 end
 
+function Prism:GetElement(name)
+	for _,w in ipairs(Prism.Windows)do
+		local e=w:GetElement(name)
+		if e then return e end
+	end
+	return nil
+end
 function Prism:SetTheme(name)return setThemeInternal(name)end
 function Prism:GetThemes()return Themes end
 function Prism:GetCurrentTheme()return currentTheme.Name end
