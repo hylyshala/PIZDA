@@ -2153,6 +2153,11 @@ function Prism:CreateWindow(cfg)
 		if e and e.SetTitle then e:SetTitle(t) end
 		return e
 	end
+	function win:SetFlagDesc(name,t)
+		local e=self.Flags[name]
+		if e and e.SetDesc then e:SetDesc(t) end
+		return e
+	end
 	function win:LockFlag(name,text)
 		local e=self.Flags[name]
 		if e and e.Lock then e:Lock(text) end
@@ -2257,6 +2262,25 @@ function Prism:GetElement(name)
 	end
 	return nil
 end
+local function runtimeCall(name,method,...)
+	local e=Prism:GetElement(name)
+	if not e then
+		warn("[Prism] element not found: "..tostring(name))
+		return nil
+	end
+	local fn=e[method]
+	if type(fn)~="function" then
+		warn("[Prism] element '"..tostring(name).."' has no method "..method)
+		return nil
+	end
+	fn(e,...)
+	return e
+end
+function Prism:Lock(name,text)return runtimeCall(name,"Lock",text)end
+function Prism:Unlock(name)return runtimeCall(name,"Unlock")end
+function Prism:SetTitle(name,text)return runtimeCall(name,"SetTitle",text)end
+function Prism:SetDesc(name,text)return runtimeCall(name,"SetDesc",text)end
+function Prism:Set(name,value)return runtimeCall(name,"Set",value)end
 function Prism:SetTheme(name)return setThemeInternal(name)end
 function Prism:GetThemes()return Themes end
 function Prism:GetCurrentTheme()return currentTheme.Name end
