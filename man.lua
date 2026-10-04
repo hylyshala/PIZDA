@@ -33,10 +33,25 @@ local clamp=math.clamp
 local Prism={Windows={},Version="1.0.0"}
 
 local Themes={}
+local function isHexColor(s)
+	if type(s)~="string" then return false end
+	s=string.gsub(s,"^#","")
+	return (#s==6 or #s==8) and string.match(s,"^%x+$")~=nil
+end
+
 local function addTheme(name,t)
 	local out={}
 	for k,v in pairs(t)do
-		out[k]=typeof(v)=="string" and Color3.fromHex(v) or v
+		if k=="Name" then
+			-- skip, set below
+		elseif typeof(v)=="Color3" then
+			out[k]=v
+		elseif typeof(v)=="string" and isHexColor(v) then
+			local ok,c=pcall(Color3.fromHex,v)
+			out[k]=ok and c or v
+		else
+			out[k]=v
+		end
 	end
 	out.Name=name
 	Themes[name]=out
@@ -518,11 +533,42 @@ local function newRow(ctx,cfg,opt)
 	if rightW>0 then
 		right=create("Frame",{BackgroundTransparency=1,AnchorPoint=Vector2.new(1,0.5),Position=UDim2.new(1,0,0.5,0),Size=UDim2.fromOffset(rightW,opt.rightHeight or 30),Parent=inner})
 	end
-	local el={Row=row,Inner=inner,Left=left,Right=right,TitleLabel=title,DescLabel=desc,Title=cfg.Title or "",Desc=cfg.Desc,Locked=false,Kind=opt.kind}
-	local lockFrame
-	function el:SetTitle(t)self.Title=t title.Text=t title.Visible=t~=nil and t~=""end
-	function el:SetDesc(t)self.Desc=t desc.Text=t or "" desc.Visible=t~=nil and t~=""end
-	function el:SetVisible(v)row.Visible=v end
+	local el={Row=row,Inner=inner,Left=left,Right=right,TitleLabel=title,DescLabel=desc,Title=cfg.Title or "",Desc=cfg.Desc,Locked=false,Kind=opt.kind,Flag=cfg.Flag}
+	local lockFrame,sizeBeforeLock
+	local function freezeRow()
+		if sizeBeforeLock then return end
+		local absY=row.AbsoluteSize.Y
+		if absY<1 then absY=inner.AbsoluteSize.Y end
+		if absY<1 then absY=36 end
+		sizeBeforeLock={auto=row.AutomaticSize,size=row.Size}
+		row.AutomaticSize=Enum.AutomaticSize.None
+		row.Size=UDim2.new(row.Size.X.Scale,row.Size.X.Offset,0,absY)
+	end
+	local function unfreezeRow()
+		if not sizeBeforeLock then return end
+		row.AutomaticSize=sizeBeforeLock.auto
+		row.Size=sizeBeforeLock.size
+		sizeBeforeLock=nil
+	end
+	function el:SetTitle(t)
+		t=t==nil and "" or tostring(t)
+		self.Title=t
+		if title and title.Parent then
+			title.Text=t
+			title.Visible=t~=""
+		end
+	end
+	function el:SetDesc(t)
+		t=t==nil and "" or tostring(t)
+		self.Desc=t
+		if desc and desc.Parent then
+			desc.Text=t
+			desc.Visible=t~=""
+		end
+	end
+	function el:SetVisible(v)
+		row.Visible=v and true or false
+	end
 	function el:Highlight()
 		local s=row:FindFirstChildOfClass("UIStroke")
 		if not s then return end
@@ -537,36 +583,43 @@ local function newRow(ctx,cfg,opt)
 	end
 	function el:Lock(text)
 		self.Locked=true
-		if not lockFrame then
-			-- Offset size only — Scale(1,1) inside AutomaticSize.Y blows the row up
-			lockFrame=create("TextButton",{Size=UDim2.fromOffset(0,0),BackgroundColor3=Color3.new(0,0,0),BackgroundTransparency=1,ZIndex=5,Parent=row},{corner(R_EL)})
-			label(text or "Locked",14,WSemi,"Text",{Size=UDim2.new(1,0,0,18),AnchorPoint=Vector2.new(0.5,0.5),Position=UDim2.fromScale(0.5,0.5),TextXAlignment=XCenter,TextTransparency=1,ZIndex=6,Parent=lockFrame})
-			row:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
-				if lockFrame and lockFrame.Parent then
-					lockFrame.Size=UDim2.fromOffset(row.AbsoluteSize.X,row.AbsoluteSize.Y)
-				end
+		local function apply()
+			if not row.Parent then return end
+			freezeRow()
+			if not lockFrame then
+				lockFrame=create("TextButton",{Size=UDim2.fromScale(1,1),BackgroundColor3=Color3.new(0,0,0),BackgroundTransparency=1,ZIndex=20,Active=true,Parent=row},{corner(R_EL)})
+				label(text or "Locked",14,WSemi,"Text",{Size=UDim2.new(1,-12,0,18),AnchorPoint=Vector2.new(0.5,0.5),Position=UDim2.fromScale(0.5,0.5),TextXAlignment=XCenter,TextTransparency=1,ZIndex=21,Parent=lockFrame})
+			end
+			lockFrame.Visible=true
+			lockFrame.Active=true
+			lockFrame.Size=UDim2.fromScale(1,1)
+			local lab=lockFrame:FindFirstChildOfClass("TextLabel")
+			if lab then
+				lab.Text=(text~=nil and tostring(text)~="") and tostring(text) or "Locked"
+			end
+			tween(lockFrame,0.2,{BackgroundTransparency=0.45})
+			if lab then tween(lab,0.2,{TextTransparency=0.1}) end
+		end
+		apply()
+		if row.AbsoluteSize.Y<1 then
+			task.defer(function()
+				if self.Locked then apply() end
 			end)
 		end
-		local function sync()
-			if lockFrame and lockFrame.Parent then
-				lockFrame.Size=UDim2.fromOffset(math.max(row.AbsoluteSize.X,1),math.max(row.AbsoluteSize.Y,1))
-			end
-		end
-		sync()
-		task.defer(sync)
-		lockFrame.Visible=true
-		lockFrame.Active=true
-		tween(lockFrame,0.2,{BackgroundTransparency=0.45})
-		tween(lockFrame:FindFirstChildOfClass("TextLabel"),0.2,{TextTransparency=0.1})
-		if text then lockFrame:FindFirstChildOfClass("TextLabel").Text=text end
 	end
 	function el:Unlock()
 		self.Locked=false
 		if lockFrame then
 			lockFrame.Active=false
 			tween(lockFrame,0.2,{BackgroundTransparency=1})
-			tween(lockFrame:FindFirstChildOfClass("TextLabel"),0.2,{TextTransparency=1})
-			task.delay(0.2,function()if lockFrame and not self.Locked then lockFrame.Visible=false end end)
+			local lab=lockFrame:FindFirstChildOfClass("TextLabel")
+			if lab then tween(lab,0.2,{TextTransparency=1}) end
+			task.delay(0.2,function()
+				if lockFrame and not self.Locked then lockFrame.Visible=false end
+				if not self.Locked then unfreezeRow() end
+			end)
+		else
+			unfreezeRow()
 		end
 	end
 	function el:Destroy()
@@ -574,6 +627,9 @@ local function newRow(ctx,cfg,opt)
 		if self.Container then
 			local i=table.find(self.Container.Elements,self)
 			if i then table.remove(self.Container.Elements,i) end
+		end
+		if self.Flag and self.Container and self.Container.Window and self.Container.Window.Flags then
+			self.Container.Window.Flags[self.Flag]=nil
 		end
 	end
 	if cfg.Locked then el:Lock(cfg.LockedTitle) end
@@ -1515,9 +1571,16 @@ end
 
 local function register(container,el,cfg)
 	el.Container=container
+	el.Window=container.Window or (container.Container and container.Container.Window)
 	table.insert(container.Elements,el)
-	if cfg.Flag and container.Window and container.Window.Flags then
-		container.Window.Flags[cfg.Flag]=el
+	local flag=cfg.Flag or el.Flag
+	if flag then
+		el.Flag=flag
+		local win=el.Window
+		if win then
+			win.Flags=win.Flags or {}
+			win.Flags[flag]=el
+		end
 	end
 	if container.OnAdd then container:OnAdd(el) end
 end
@@ -1970,6 +2033,23 @@ function Prism:CreateWindow(cfg)
 	function win:Notify(c)return Prism:Notify(c)end
 	function win:LockAll()for _,e in pairs(self.Flags)do if e.Lock then e:Lock()end end for _,t in ipairs(self.Tabs)do t:LockAll()end end
 	function win:UnlockAll()for _,e in pairs(self.Flags)do if e.Unlock then e:Unlock()end end for _,t in ipairs(self.Tabs)do t:UnlockAll()end end
+	function win:GetFlag(name)return self.Flags[name]end
+	function win:Flag(name)return self.Flags[name]end
+	function win:SetFlagTitle(name,t)
+		local e=self.Flags[name]
+		if e and e.SetTitle then e:SetTitle(t) end
+		return e
+	end
+	function win:LockFlag(name,text)
+		local e=self.Flags[name]
+		if e and e.Lock then e:Lock(text) end
+		return e
+	end
+	function win:UnlockFlag(name)
+		local e=self.Flags[name]
+		if e and e.Unlock then e:Unlock() end
+		return e
+	end
 	function win:SelectTab(t)
 		if type(t)=="number" then t=self.Tabs[t] end
 		if t then selectTab(self,t) end
@@ -2048,8 +2128,12 @@ end
 function Prism:AddTheme(t)
 	if type(t)~="table" or not t.Name then return nil end
 	local base={}
-	for k,v in pairs(Themes.Midnight)do base[k]=v end
-	for k,v in pairs(t)do base[k]=v end
+	for k,v in pairs(Themes.Midnight)do
+		if k~="Name" then base[k]=v end
+	end
+	for k,v in pairs(t)do
+		if k~="Name" then base[k]=v end
+	end
 	return addTheme(t.Name,base)
 end
 
