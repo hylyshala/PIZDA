@@ -39,15 +39,23 @@ local function isHexColor(s)
 	return (#s==6 or #s==8) and string.match(s,"^%x+$")~=nil
 end
 
+local function colorFromHex(s)
+	s=string.gsub(tostring(s),"^#","")
+	if (#s~=6 and #s~=8) or not string.match(s,"^%x+$") then return nil end
+	local r=tonumber(string.sub(s,1,2),16)
+	local g=tonumber(string.sub(s,3,4),16)
+	local b=tonumber(string.sub(s,5,6),16)
+	if not r or not g or not b then return nil end
+	return Color3.fromRGB(r,g,b)
+end
 local function addTheme(name,t)
 	local out={}
 	for k,v in pairs(t)do
 		if k~="Name" then
 			if typeof(v)=="Color3" then
-				out[k]=v
+				out[k]=Color3.new(v.R,v.G,v.B)
 			elseif typeof(v)=="string" and isHexColor(v) then
-				local ok,c=pcall(Color3.fromHex,v)
-				out[k]=ok and c or v
+				out[k]=colorFromHex(v) or Color3.new(1,1,1)
 			else
 				out[k]=v
 			end
@@ -69,6 +77,8 @@ addTheme("Mono",{Background="#0b0b0b",Panel="#121212",Element="#1a1a1a",Hover="#
 local currentTheme=Themes.Midnight
 local themeListeners={}
 local bindings=setmetatable({},{__mode="k"})
+local themeEntries={}
+local themeByInst=setmetatable({},{__mode="k"})
 
 local function tween(inst,time,props,style,dir)
 	local t=TweenService:Create(inst,TweenInfo.new(time or 0.2,style or Enum.EasingStyle.Quint,dir or Enum.EasingDirection.Out),props)
@@ -76,23 +86,60 @@ local function tween(inst,time,props,style,dir)
 	return t
 end
 
+local function themeColor(key)
+	local c=currentTheme and currentTheme[key]
+	if typeof(c)=="Color3" then return c end
+	return nil
+end
+
+local function rememberTheme(inst,prop,key)
+	local owned=themeByInst[inst]
+	if not owned then
+		owned={}
+		themeByInst[inst]=owned
+		inst.Destroying:Connect(function()
+			local map=themeByInst[inst]
+			themeByInst[inst]=nil
+			if not map then return end
+			for _,entry in pairs(map) do entry.dead=true end
+		end)
+	end
+	local entry=owned[prop]
+	if entry then
+		entry.key=key
+		entry.dead=false
+		return entry
+	end
+	entry={inst=inst,prop=prop,key=key,dead=false}
+	owned[prop]=entry
+	table.insert(themeEntries,entry)
+	return entry
+end
+
 local function bind(inst,prop,key)
 	local b=bindings[inst]
 	if not b then b={} bindings[inst]=b end
 	b[prop]=key
-	inst[prop]=currentTheme[key]
+	rememberTheme(inst,prop,key)
+	local c=themeColor(key)
+	if c then inst[prop]=c end
 end
 
 local function unbind(inst,prop)
 	local b=bindings[inst]
 	if b then b[prop]=nil end
+	local owned=themeByInst[inst]
+	if owned and owned[prop] then owned[prop].dead=true owned[prop]=nil end
 end
 
 local function paint(inst,prop,key,time)
 	local b=bindings[inst]
 	if not b then b={} bindings[inst]=b end
 	b[prop]=key
-	if time then tween(inst,time,{[prop]=currentTheme[key]}) else inst[prop]=currentTheme[key] end
+	rememberTheme(inst,prop,key)
+	local c=themeColor(key)
+	if not c then return end
+	if time then tween(inst,time,{[prop]=c}) else inst[prop]=c end
 end
 
 local defaults={
@@ -162,7 +209,6 @@ local function copyText(text)
 	return (pcall(clipFn,text))
 end
 
-local themeGeneration=0
 local function themeAlive(inst)
 	local ok,parent=pcall(function()return inst.Parent end)
 	return ok and parent~=nil
@@ -171,29 +217,29 @@ local function cloneThemeColor(v)
 	if typeof(v)=="Color3" then return Color3.new(v.R,v.G,v.B) end
 	return v
 end
+local function applyThemeColors()
+	local t=currentTheme
+	local i=1
+	while i<=#themeEntries do
+		local e=themeEntries[i]
+		local inst=e.inst
+		if e.dead or not themeAlive(inst) then
+			e.dead=true
+			table.remove(themeEntries,i)
+		else
+			local c=t[e.key]
+			if typeof(c)=="Color3" then
+				pcall(function() inst[e.prop]=c end)
+			end
+			i+=1
+		end
+	end
+end
 local function setThemeInternal(name)
 	local t=Themes[name]
 	if not t then return false end
-	if currentTheme==t then
-		for _,fn in pairs(themeListeners)do safe(fn,name)end
-		return true
-	end
 	currentTheme=t
-	themeGeneration+=1
-	local dead={}
-	for inst,b in pairs(bindings)do
-		if themeAlive(inst) then
-			local props={}
-			for prop,key in pairs(b)do
-				local c=t[key]
-				if typeof(c)=="Color3" then props[prop]=c end
-			end
-			if next(props) then tween(inst,0.3,props) end
-		else
-			table.insert(dead,inst)
-		end
-	end
-	for _,inst in ipairs(dead)do bindings[inst]=nil end
+	applyThemeColors()
 	for _,fn in pairs(themeListeners)do safe(fn,name)end
 	return true
 end
