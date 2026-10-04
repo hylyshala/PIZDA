@@ -513,6 +513,7 @@ local function makeDraggable(handle,target,onFinish,margin)
 		return margin
 	end
 	handle.InputBegan:Connect(function(input)
+		if handle:GetAttribute("PrismLockDrag") then return end
 		if input.UserInputType~=MouseBtn and input.UserInputType~=TouchIn then return end
 		local startPointer=pointerPos(input)
 		local startPos=target.Position
@@ -2134,8 +2135,8 @@ local function addButtonStyle(name,spec)
 	ButtonStyles[name]=out
 	return out
 end
-addButtonStyle("Orb",{Shape="Circle",Size=48,CompactSize=54,TextSize=22,CompactTextSize=24,Background="Accent",Text="AccentText",Stroke=true,StrokeColor=Color3.new(1,1,1),StrokeThickness=2,StrokeTransparency=0.55,Gradient=true,GradientRotation=45})
-addButtonStyle("Square",{Shape="Rounded",Size=46,CompactSize=52,Corner=8,TextSize=18,CompactTextSize=20,Background="Accent",Text="AccentText",Stroke=true,StrokeColor="AccentText",StrokeThickness=1.5,StrokeTransparency=0.2,Gradient=false})
+addButtonStyle("Orb",{Shape="Circle",Size=48,CompactSize=54,TextSize=22,CompactTextSize=24,Background="Accent",Text="AccentText",Stroke=true,StrokeColor=Color3.new(1,1,1),StrokeThickness=2,StrokeTransparency=0.55,Gradient=true,GradientRotation=45,SpinText=false,HoverScale=1.08,PressScale=0.94,Draggable=true})
+addButtonStyle("Square",{Shape="Rounded",Size=46,CompactSize=52,Corner=8,TextSize=18,CompactTextSize=20,Background="Accent",Text="AccentText",Stroke=true,StrokeColor="AccentText",StrokeThickness=1.5,StrokeTransparency=0.2,Gradient=false,SpinText=false,Shadow=true,HoverScale=1.06,PressScale=0.95,Draggable=true})
 
 function Prism:CreateWindow(cfg)
 	cfg=cfg or {}
@@ -2295,57 +2296,201 @@ function Prism:CreateWindow(cfg)
 	local openSheen=create("UIGradient",{Name="OpenSheen",Color=ColorSequence.new(Color3.new(1,1,1),Color3.fromRGB(190,190,190)),Rotation=45,Parent=toggle})
 	local tbScale=create("UIScale",{Scale=1,Parent=toggle})
 	local letter=label(string.upper(tbCfg.Letter or string.sub(win.Title,1,1)),22,WBold,"AccentText",{Size=UDim2.fromScale(1,1),TextXAlignment=XCenter,Rotation=0,Parent=toggle})
+	local spinOpenText=false
+	local openTextRotation=0
 	local function styleColor(value,fallback)
 		if typeof(value)=="Color3" then return value end
 		if type(value)=="string" and currentTheme and typeof(currentTheme[value])=="Color3" then return currentTheme[value] end
 		return fallback
 	end
+	local openImage=create("ImageLabel",{Name="OpenImage",Size=UDim2.fromScale(1,1),BackgroundTransparency=1,Visible=false,ZIndex=1,Parent=toggle},{corner(24)})
+	local openDetails=create("Frame",{Name="OpenDetails",BackgroundTransparency=1,Size=UDim2.fromScale(1,1),ZIndex=2,Parent=toggle})
+	local function assetOf(v)
+		if type(v)=="number" then return "rbxassetid://"..v end
+		return v
+	end
+	local function scaleOf(v)
+		if typeof(v)=="EnumItem" then return v end
+		return ({Crop=Enum.ScaleType.Crop,Fit=Enum.ScaleType.Fit,Slice=Enum.ScaleType.Slice,Tile=Enum.ScaleType.Tile,Stretch=Enum.ScaleType.Stretch})[v] or Enum.ScaleType.Crop
+	end
+	local function rectOf(v)
+		if typeof(v)=="Rect" then return v end
+		if type(v)=="table" then return Rect.new(v[1] or v.Min and v.Min.X or 0,v[2] or v.Min and v.Min.Y or 0,v[3] or v.Max and v.Max.X or 0,v[4] or v.Max and v.Max.Y or 0) end
+		return nil
+	end
+	local function clearDetails()
+		for _,child in ipairs(openDetails:GetChildren()) do child:Destroy() end
+	end
+	local function buildDetail(spec)
+		spec=spec or {}
+		local kind=spec.Type or (spec.Image and "Image") or (spec.Text and "Text") or (spec.Icon and "Icon") or "Frame"
+		local inst
+		if kind=="Image" then
+			inst=create("ImageLabel",{Name=spec.Name or "Detail",BackgroundTransparency=spec.BackgroundTransparency or 1,Image=assetOf(spec.Image or "") or "",ScaleType=scaleOf(spec.ScaleType),ZIndex=spec.ZIndex or 2,Parent=openDetails})
+			local slice=rectOf(spec.SliceCenter)
+			if slice then inst.SliceCenter=slice end
+			if typeof(spec.ImageRectOffset)=="Vector2" then inst.ImageRectOffset=spec.ImageRectOffset end
+			if typeof(spec.ImageRectSize)=="Vector2" then inst.ImageRectSize=spec.ImageRectSize end
+			if typeof(spec.TileSize)=="UDim2" then inst.TileSize=spec.TileSize end
+			inst.ImageTransparency=spec.ImageTransparency or 0
+			inst.ImageColor3=styleColor(spec.ImageColor or Color3.new(1,1,1),Color3.new(1,1,1))
+			if spec.Background then
+				if typeof(spec.Background)=="Color3" then inst.BackgroundColor3=spec.Background else bind(inst,"BackgroundColor3",spec.Background) end
+				inst.BackgroundTransparency=spec.BackgroundTransparency or 0
+			end
+		elseif kind=="Text" then
+			inst=label(tostring(spec.Text or ""),spec.TextSize or 14,WBold,type(spec.TextColor)=="string" and spec.TextColor or "AccentText",{Name=spec.Name or "Detail",ZIndex=spec.ZIndex or 3,Parent=openDetails})
+			if typeof(spec.TextColor)=="Color3" then unbind(inst,"TextColor3") inst.TextColor3=spec.TextColor end
+			inst.TextXAlignment=spec.TextXAlignment or XCenter
+		elseif kind=="Icon" then
+			inst=iconNode(spec.Icon,spec.IconSize or spec.Size and spec.Size.X.Offset or 16,spec.IconColor or "AccentText",true)
+			if inst then inst.Name=spec.Name or "Detail" inst.ZIndex=spec.ZIndex or 3 inst.Parent=openDetails end
+		else
+			inst=create("Frame",{Name=spec.Name or "Detail",ZIndex=spec.ZIndex or 2,Parent=openDetails})
+			local bg=spec.Background or "Accent"
+			if typeof(bg)=="Color3" then inst.BackgroundColor3=bg else bind(inst,"BackgroundColor3",bg) end
+			inst.BackgroundTransparency=spec.BackgroundTransparency or 0
+		end
+		if not inst then return nil end
+		inst.Size=spec.Size or UDim2.fromScale(1,1)
+		inst.Position=spec.Position or UDim2.fromOffset(0,0)
+		inst.AnchorPoint=spec.AnchorPoint or Vector2.new(0,0)
+		inst.Rotation=spec.Rotation or 0
+		inst.Visible=spec.Visible~=false
+		if spec.Corner then corner(spec.Corner).Parent=inst end
+		if spec.Stroke then
+			local s=create("UIStroke",{Thickness=spec.StrokeThickness or 1,Transparency=spec.StrokeTransparency or 0,Parent=inst})
+			local sc=spec.StrokeColor or "AccentText"
+			if type(sc)=="string" and currentTheme and currentTheme[sc] then bind(s,"Color",sc) else s.Color=styleColor(sc,Color3.new(1,1,1)) end
+		end
+		if spec.Gradient then
+			local cols=spec.GradientColors or spec.Color
+			local seq=typeof(cols)=="ColorSequence" and cols or colorSequence(cols or {"#ffffff","#d0d0d0"})
+			create("UIGradient",{Color=seq or ColorSequence.new(Color3.new(1,1,1)),Rotation=spec.GradientRotation or spec.Rotation or 0,Parent=inst})
+		end
+		return inst
+	end
+	local openShadow=create("ImageLabel",{Name="OpenShadow",Image="rbxassetid://6014261993",ImageColor3=Color3.new(0,0,0),ImageTransparency=0.45,ScaleType=Enum.ScaleType.Slice,SliceCenter=Rect.new(49,49,450,450),Size=UDim2.new(1,28,1,28),Position=UDim2.fromOffset(-14,-10),Visible=false,ZIndex=0,Parent=toggle})
+	local openIcon
+	local hoverScale,pressScale=1.08,0.94
+	local function pick(style,key,fallback)
+		if tbCfg[key]~=nil then return tbCfg[key] end
+		if style[key]~=nil then return style[key] end
+		return fallback
+	end
+	local function weightOf(name)
+		if name=="Regular" then return WReg end
+		if name=="Medium" then return WMed end
+		if name=="Semi" or name=="SemiBold" then return WSemi end
+		return WBold
+	end
 	local function applyOpenStyle(name)
 		local style=ButtonStyles[name or ""] or ButtonStyles.Orb
 		if not style then return false end
 		win.ButtonStyle=style.Name
-		local width=compact and (style.CompactWidth or style.Width) or style.Width
-		local height=compact and (style.CompactHeight or style.Height) or style.Height
-		local size=compact and (style.CompactSize or style.Size) or style.Size or 48
+		local width=compact and pick(style,"CompactWidth",pick(style,"Width",nil)) or pick(style,"Width",nil)
+		local height=compact and pick(style,"CompactHeight",pick(style,"Height",nil)) or pick(style,"Height",nil)
+		local size=compact and pick(style,"CompactSize",pick(style,"Size",48)) or pick(style,"Size",48)
 		width=width or size
 		height=height or size
 		toggle.Size=UDim2.fromOffset(width,height)
 		openMargin[1]=math.max(width,height)/2
-		local shape=style.Shape or "Circle"
-		local radius=height/2
-		if shape=="Square" then radius=style.Corner or 4
-		elseif shape=="Rounded" then radius=style.Corner or 10
+		local shape=pick(style,"Shape","Circle")
+		local radius=math.min(width,height)/2
+		if shape=="Square" then radius=pick(style,"Corner",4)
+		elseif shape=="Rounded" then radius=pick(style,"Corner",10)
+		elseif shape=="Pill" then radius=height/2
 		elseif shape=="Circle" then radius=math.min(width,height)/2 end
 		openCorner.CornerRadius=UDim.new(0,radius)
-		local bg=style.Background or "Accent"
+		openImage:FindFirstChildOfClass("UICorner").CornerRadius=UDim.new(0,radius)
+		local bg=pick(style,"Background","Accent")
 		if typeof(bg)=="Color3" then unbind(toggle,"BackgroundColor3") toggle.BackgroundColor3=bg else bind(toggle,"BackgroundColor3",bg) end
-		local textKey=style.Text or "AccentText"
+		toggle.BackgroundTransparency=pick(style,"BackgroundTransparency",0)
+		local textKey=pick(style,"Text","AccentText")
 		if typeof(textKey)=="Color3" then unbind(letter,"TextColor3") letter.TextColor3=textKey else bind(letter,"TextColor3",textKey) end
-		local caption=tbCfg.Letter or style.Letter
-		if caption==nil and style.ShowTitle then caption=win.Title end
+		letter.TextTransparency=pick(style,"TextTransparency",0)
+		letter.FontFace=font(weightOf(pick(style,"Font","Bold")))
+		letter.TextXAlignment=pick(style,"TextXAlignment",XCenter)
+		letter.TextYAlignment=pick(style,"TextYAlignment",Enum.TextYAlignment.Center)
+		letter.TextScaled=pick(style,"TextScaled",false)==true
+		local caption=pick(style,"Letter",nil)
+		if caption==nil and pick(style,"ShowTitle",false) then caption=win.Title end
+		if caption==nil and pick(style,"TextValue",nil) then caption=pick(style,"TextValue",nil) end
 		if caption==nil then caption=string.sub(win.Title,1,1) end
-		letter.Text=style.Upper==false and tostring(caption) or string.upper(tostring(caption))
-		letter.TextSize=compact and (style.CompactTextSize or style.TextSize or 20) or (style.TextSize or 22)
-		openStroke.Enabled=style.Stroke~=false
-		openStroke.Thickness=style.StrokeThickness or 2
-		openStroke.Transparency=style.StrokeTransparency or 0.55
-		local strokeColor=styleColor(style.StrokeColor,Color3.new(1,1,1))
-		if type(style.StrokeColor)=="string" and currentTheme and currentTheme[style.StrokeColor] then
-			bind(openStroke,"Color",style.StrokeColor)
+		letter.Text=pick(style,"Upper",true)==false and tostring(caption) or string.upper(tostring(caption))
+		letter.TextSize=compact and pick(style,"CompactTextSize",pick(style,"TextSize",20)) or pick(style,"TextSize",22)
+		openTextRotation=pick(style,"TextRotation",0)
+		letter.Rotation=openTextRotation
+		spinOpenText=pick(style,"SpinText",false)==true
+		toggle.Rotation=pick(style,"Rotation",0)
+		openStroke.Enabled=pick(style,"Stroke",true)~=false
+		openStroke.Thickness=pick(style,"StrokeThickness",2)
+		openStroke.Transparency=pick(style,"StrokeTransparency",0.55)
+		local strokeKey=pick(style,"StrokeColor",Color3.new(1,1,1))
+		if type(strokeKey)=="string" and currentTheme and currentTheme[strokeKey] then
+			bind(openStroke,"Color",strokeKey)
 		else
 			unbind(openStroke,"Color")
-			openStroke.Color=strokeColor
+			openStroke.Color=styleColor(strokeKey,Color3.new(1,1,1))
 		end
-		openSheen.Enabled=style.Gradient~=false
-		if type(style.GradientRotation)=="number" then openSheen.Rotation=style.GradientRotation end
-		if style.GradientColors then openSheen.Color=style.GradientColors end
+		openSheen.Enabled=pick(style,"Gradient",true)~=false
+		openSheen.Rotation=pick(style,"GradientRotation",45)
+		local colors=pick(style,"GradientColors",nil)
+		if typeof(colors)=="ColorSequence" then openSheen.Color=colors
+		elseif type(colors)=="table" then
+			local seq=colorSequence(colors)
+			if seq then openSheen.Color=seq end
+		end
+		local image=pick(style,"Image",nil) or pick(style,"Texture",nil)
+		openImage.Visible=image~=nil and image~=""
+		if image then openImage.Image=assetOf(image) end
+		openImage.ImageTransparency=pick(style,"ImageTransparency",pick(style,"TextureTransparency",0))
+		openImage.ImageColor3=styleColor(pick(style,"ImageColor",pick(style,"TextureColor",Color3.new(1,1,1))),Color3.new(1,1,1))
+		openImage.ScaleType=scaleOf(pick(style,"ScaleType",pick(style,"TextureScale","Crop")))
+		local slice=rectOf(pick(style,"SliceCenter",nil))
+		if slice then openImage.SliceCenter=slice end
+		if typeof(pick(style,"ImageRectOffset",nil))=="Vector2" then openImage.ImageRectOffset=pick(style,"ImageRectOffset") end
+		if typeof(pick(style,"ImageRectSize",nil))=="Vector2" then openImage.ImageRectSize=pick(style,"ImageRectSize") end
+		if typeof(pick(style,"TileSize",nil))=="UDim2" then openImage.TileSize=pick(style,"TileSize") end
+		openImage.ZIndex=pick(style,"ImageZIndex",1)
+		toggle.ClipsDescendants=pick(style,"Clip",true)~=false
+		toggle.AutoButtonColor=false
+		openShadow.Visible=pick(style,"Shadow",false)==true
+		openShadow.ImageTransparency=pick(style,"ShadowTransparency",0.45)
+		hoverScale=pick(style,"HoverScale",1.08)
+		pressScale=pick(style,"PressScale",0.94)
+		toggle:SetAttribute("PrismLockDrag",pick(style,"Draggable",true)==false)
+		if openIcon then openIcon:Destroy() openIcon=nil end
+		local icon=pick(style,"Icon",nil)
+		if icon then
+			openIcon=iconNode(icon,pick(style,"IconSize",math.floor(height*0.46)),pick(style,"IconColor","AccentText"),true)
+			if openIcon then
+				openIcon.Name="OpenIcon"
+				openIcon.AnchorPoint=Vector2.new(0.5,0.5)
+				openIcon.Position=UDim2.fromScale(0.5,0.5)
+				openIcon.ZIndex=3
+				openIcon.Parent=toggle
+			end
+			letter.Visible=pick(style,"ShowLetter",false)==true
+		else
+			letter.Visible=true
+		end
+		if pick(style,"Visible",nil)~=nil then toggle.Visible=pick(style,"Visible",true) end
+		if pick(style,"Position",nil) then toggle.Position=pick(style,"Position") end
+		clearDetails()
+		local parts=pick(style,"Parts",nil) or pick(style,"Details",nil)
+		if type(parts)=="table" then
+			for _,part in ipairs(parts) do buildDetail(part) end
+		end
+		local builder=pick(style,"Build",nil)
+		if type(builder)=="function" then safe(builder,toggle,openDetails) end
 		return true
 	end
 	applyOpenStyle(cfg.ButtonStyle or tbCfg.Style or tbCfg.ButtonStyle or "Orb")
-	toggle.MouseEnter:Connect(function()tween(tbScale,0.15,{Scale=1.1})end)
+	toggle.MouseEnter:Connect(function()tween(tbScale,0.15,{Scale=hoverScale})end)
 	toggle.MouseLeave:Connect(function()tween(tbScale,0.15,{Scale=1})end)
 	toggle.InputBegan:Connect(function(i)
-		if i.UserInputType==MouseBtn or i.UserInputType==TouchIn then tween(tbScale,0.08,{Scale=0.9}) end
+		if i.UserInputType==MouseBtn or i.UserInputType==TouchIn then tween(tbScale,0.08,{Scale=pressScale}) end
 	end)
 	toggle.InputEnded:Connect(function(i)
 		if i.UserInputType==MouseBtn or i.UserInputType==TouchIn then tween(tbScale,0.25,{Scale=1},EaseBack) end
@@ -2355,6 +2500,9 @@ function Prism:CreateWindow(cfg)
 	end,openMargin)
 	win.ToggleButton=toggle
 	function win:SetButtonStyle(name)return applyOpenStyle(name)end
+	function win:AddButtonDetail(spec)return buildDetail(spec)end
+	function win:ClearButtonDetails()clearDetails()end
+	function win:GetOpenButton()return toggle end
 
 	function win:Open()
 		if self.Destroyed or not self.Closed then return end
@@ -2362,8 +2510,12 @@ function Prism:CreateWindow(cfg)
 		holder.Visible=true
 		anim.Scale=0.88
 		tween(anim,0.4,{Scale=1},EaseBack)
-		tween(letter,0.4,{Rotation=360},EaseBack)
-		task.delay(0.42,function()letter.Rotation=0 end)
+		if spinOpenText then
+			tween(letter,0.4,{Rotation=360},EaseBack)
+			task.delay(0.42,function()letter.Rotation=openTextRotation end)
+		else
+			letter.Rotation=openTextRotation
+		end
 		safe(self.OnOpenCallback)
 	end
 	function win:Close()
@@ -2391,10 +2543,11 @@ function Prism:CreateWindow(cfg)
 	function win:SetToCenter()tween(holder,0.4,{Position=UDim2.fromScale(0.5,0.5)})end
 	function win:EditToggleButton(c)
 		c=c or {}
-		if c.Style or c.ButtonStyle then applyOpenStyle(c.Style or c.ButtonStyle) end
-		if c.Letter then letter.Text=string.upper(c.Letter) end
-		if c.Visible~=nil then toggle.Visible=c.Visible end
-		if c.Position then toggle.Position=c.Position end
+		if c.Style or c.ButtonStyle then cfg.ButtonStyle=c.Style or c.ButtonStyle end
+		for k,v in pairs(c)do
+			if k~="Style" and k~="ButtonStyle" then tbCfg[k]=v end
+		end
+		applyOpenStyle(cfg.ButtonStyle or win.ButtonStyle or "Orb")
 	end
 	win.EditOpenButton=win.EditToggleButton
 	function win:Dialog(c)return makeDialog(c)end
