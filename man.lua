@@ -549,6 +549,12 @@ local function newRow(ctx,cfg,opt)
 		row.AutomaticSize=sizeBeforeLock.auto
 		row.Size=sizeBeforeLock.size
 		sizeBeforeLock=nil
+		local c=el.Container
+		if c and c.Relayout then
+			c:Relayout()
+		elseif c and c.OnAdd then
+			c:OnAdd()
+		end
 	end
 	function el:SetTitle(t)
 		t=t==nil and "" or tostring(t)
@@ -1550,7 +1556,8 @@ Elements.Section=function(ctx,cfg)
 end
 
 Elements.Group=function(ctx,cfg)
-	local gap=6
+	cfg=cfg or {}
+	local gap=type(cfg.Gap)=="number" and cfg.Gap or 6
 	local frame=create("Frame",{Name="Group",BackgroundTransparency=1,Size=UDim2.new(1,0,0,0),AutomaticSize=AutoY,Parent=ctx.Content},{list(DirH,gap,AlignL,AlignT)})
 	local group=plainElement(frame)
 	group.Content=frame
@@ -1558,14 +1565,33 @@ Elements.Group=function(ctx,cfg)
 	group.Elements={}
 	group.Narrow=true
 	group.__container=true
-	function group:OnAdd()
-		local n=#self.Elements
-		for _,e in ipairs(self.Elements)do
-			if e.Row then
-				e.Row.Size=UDim2.new(1/n,-(gap*(n-1)/n),0,0)
+	-- Scale widths + horizontal UIListLayout overflow past the panel.
+	-- Size columns in offset from AbsoluteSize so they always fit.
+	local function relayout()
+		local n=#group.Elements
+		if n<=0 then return end
+		local width=frame.AbsoluteSize.X
+		if width<2 then return end
+		local localW=width/math.max(uiScale,0.001)
+		local cell=math.max(1,(localW-gap*(n-1))/n)
+		for _,e in ipairs(group.Elements)do
+			if e.Row and e.Row.Parent then
+				if e.Locked and e.Row.AutomaticSize==Enum.AutomaticSize.None then
+					e.Row.Size=UDim2.fromOffset(cell,math.max(e.Row.Size.Y.Offset,1))
+				else
+					e.Row.AutomaticSize=Enum.AutomaticSize.Y
+					e.Row.Size=UDim2.new(0,cell,0,0)
+				end
 			end
 		end
 	end
+	function group:OnAdd()
+		task.defer(relayout)
+	end
+	function group:Relayout()
+		relayout()
+	end
+	frame:GetPropertyChangedSignal("AbsoluteSize"):Connect(relayout)
 	return group
 end
 
