@@ -48,11 +48,46 @@ local function colorFromHex(s)
 	if not r or not g or not b then return nil end
 	return Color3.fromRGB(r,g,b)
 end
+local function copyGradientSpec(spec)
+	if typeof(spec)=="ColorSequence" or typeof(spec)=="NumberSequence" then return spec end
+	if type(spec)~="table" then return spec end
+	local out={}
+	for k,v in pairs(spec)do
+		if typeof(v)=="Color3" then
+			out[k]=Color3.new(v.R,v.G,v.B)
+		elseif type(v)=="table" then
+			local list={}
+			for i,item in ipairs(v)do
+				if typeof(item)=="Color3" then
+					list[i]=Color3.new(item.R,item.G,item.B)
+				elseif type(item)=="table" then
+					local row={}
+					for rk,rv in pairs(item)do
+						row[rk]=typeof(rv)=="Color3" and Color3.new(rv.R,rv.G,rv.B) or rv
+					end
+					list[i]=row
+				else
+					list[i]=item
+				end
+			end
+			out[k]=list
+		else
+			out[k]=v
+		end
+	end
+	return out
+end
 local function addTheme(name,t)
 	local out={}
 	for k,v in pairs(t)do
 		if k~="Name" then
-			if typeof(v)=="Color3" then
+			if k=="Gradients" and type(v)=="table" then
+				local gradients={}
+				for role,spec in pairs(v)do gradients[role]=copyGradientSpec(spec) end
+				out.Gradients=gradients
+			elseif k=="Gradient" then
+				out.Gradient=copyGradientSpec(v)
+			elseif typeof(v)=="Color3" then
 				out[k]=Color3.new(v.R,v.G,v.B)
 			elseif typeof(v)=="string" and isHexColor(v) then
 				out[k]=colorFromHex(v) or Color3.new(1,1,1)
@@ -73,6 +108,8 @@ addTheme("Forest",{Background="#0a110e",Panel="#101a15",Element="#16231c",Hover=
 addTheme("Orchid",{Background="#0f0b16",Panel="#17111f",Element="#201829",Hover="#2c2239",Stroke="#3a2e4b",Text="#f0e9f8",Sub="#9a89b0",Accent="#b57cff",AccentText="#ffffff",Good="#3ecf8e",Warn="#f5b73b",Bad="#f0566a"})
 addTheme("Ocean",{Background="#071218",Panel="#0c1b23",Element="#12262f",Hover="#1b3642",Stroke="#25454f",Text="#e3f4fa",Sub="#7ba4b3",Accent="#22c1e6",AccentText="#041015",Good="#3ecf8e",Warn="#f5b73b",Bad="#f0566a"})
 addTheme("Mono",{Background="#0b0b0b",Panel="#121212",Element="#1a1a1a",Hover="#262626",Stroke="#333333",Text="#f2f2f2",Sub="#8f8f8f",Accent="#f2f2f2",AccentText="#0b0b0b",Good="#3ecf8e",Warn="#f5b73b",Bad="#f0566a"})
+addTheme("Ocean-Glow",{Background="#071218",Panel="#0c1b23",Element="#12262f",Hover="#1b3642",Stroke="#25454f",Text="#e3f4fa",Sub="#7ba4b3",Accent="#22c1e6",AccentText="#041015",Good="#3ecf8e",Warn="#f5b73b",Bad="#f0566a",Gradients={Background={Color={"#071218","#123246","#22c1e6"},Rotation=135},Panel={Color={"#0c1b23","#16465a"},Rotation=120},Accent={Color={"#22c1e6","#6c8dff"},Rotation=15}}})
+addTheme("Violet-Fade",{Background="#090514",Panel="#120a26",Element="#1c103b",Hover="#2d1a5e",Stroke="#44278c",Text="#f8f5ff",Sub="#b299e6",Accent="#c471ff",AccentText="#ffffff",Good="#9e52ff",Warn="#e099ff",Bad="#ff3377",Gradients={Background={Color={"#090514","#1c103b","#c471ff"},Rotation=140},Panel={Color={"#120a26","#2d1a5e"},Rotation=115},Element={Color={"#1c103b","#2d1a5e"},Rotation=90},Accent={Color={"#c471ff","#22c1e6"},Rotation=20}}})
 
 local currentTheme=Themes.Midnight
 local themeListeners={}
@@ -116,13 +153,108 @@ local function rememberTheme(inst,prop,key)
 	return entry
 end
 
+local function asColor(v)
+	if typeof(v)=="Color3" then return Color3.new(v.R,v.G,v.B) end
+	if type(v)=="string" then return colorFromHex(v) end
+	return nil
+end
+local function colorSequence(value)
+	if typeof(value)=="ColorSequence" then return value end
+	if type(value)~="table" then
+		local one=asColor(value)
+		if one then return ColorSequence.new(one) end
+		return nil
+	end
+	local keys={}
+	local n=#value
+	for i,item in ipairs(value)do
+		local col,at
+		if type(item)=="table" and (item.Color or item[2]) then
+			col=asColor(item.Color or item[2])
+			at=item.Time or item[1]
+		else
+			col=asColor(item)
+		end
+		if col then
+			if type(at)~="number" then at=n<=1 and 0 or (i-1)/(n-1) end
+			table.insert(keys,ColorSequenceKeypoint.new(math.clamp(at,0,1),col))
+		end
+	end
+	if #keys==0 then return nil end
+	if #keys==1 then return ColorSequence.new(keys[1].Value) end
+	table.sort(keys,function(a,b)return a.Time<b.Time end)
+	if keys[1].Time>0 then table.insert(keys,1,ColorSequenceKeypoint.new(0,keys[1].Value)) end
+	if keys[#keys].Time<1 then table.insert(keys,ColorSequenceKeypoint.new(1,keys[#keys].Value)) end
+	return ColorSequence.new(keys)
+end
+local function transparencySequence(value)
+	if typeof(value)=="NumberSequence" then return value end
+	if type(value)=="number" then return NumberSequence.new(value) end
+	if type(value)~="table" then return nil end
+	local keys={}
+	local n=#value
+	for i,item in ipairs(value)do
+		local num,at
+		if type(item)=="table" then num=item.Value or item[2] at=item.Time or item[1] else num=item end
+		if type(num)=="number" then
+			if type(at)~="number" then at=n<=1 and 0 or (i-1)/(n-1) end
+			table.insert(keys,NumberSequenceKeypoint.new(math.clamp(at,0,1),num))
+		end
+	end
+	if #keys==0 then return nil end
+	if #keys==1 then return NumberSequence.new(keys[1].Value) end
+	return NumberSequence.new(keys)
+end
+local function gradientSpec(key)
+	local theme=currentTheme
+	if not theme then return nil end
+	if type(theme.Gradients)=="table" and theme.Gradients[key]~=nil then return theme.Gradients[key] end
+	if theme.Gradient and (key=="Background" or key=="Panel" or key=="Accent") then return theme.Gradient end
+	return nil
+end
+local function applyGradient(inst,prop,key)
+	if prop~="BackgroundColor3" or not inst:IsA("GuiObject") then return false end
+	local spec=gradientSpec(key)
+	local owned=inst:FindFirstChild("PrismGradient")
+	local existing=owned or inst:FindFirstChildOfClass("UIGradient")
+	if spec==false or spec==nil then
+		if owned then owned:Destroy() end
+		if existing and existing.Parent and existing.Name~="PrismGradient" then
+			pcall(function() existing.Color=ColorSequence.new(Color3.new(1,1,1)) end)
+		end
+		return false
+	end
+	local seq=colorSequence(spec.Color or spec.Colors or spec)
+	if not seq then return false end
+	local grad=existing
+	if not grad then
+		grad=Instance.new("UIGradient")
+		grad.Name="PrismGradient"
+		grad.Parent=inst
+	end
+	grad.Color=seq
+	grad.Rotation=spec.Rotation or 90
+	local transparency=transparencySequence(spec.Transparency)
+	if transparency and grad.Name=="PrismGradient" then grad.Transparency=transparency end
+	if typeof(spec.Offset)=="Vector2" then grad.Offset=spec.Offset end
+	return true
+end
+local function paintTheme(inst,prop,key,time)
+	local solid=themeColor(key)
+	local gradient=applyGradient(inst,prop,key)
+	if gradient then
+		pcall(function() inst[prop]=Color3.new(1,1,1) end)
+		return
+	end
+	if not solid then return end
+	if time then tween(inst,time,{[prop]=solid}) else inst[prop]=solid end
+end
 local function bind(inst,prop,key)
 	local b=bindings[inst]
 	if not b then b={} bindings[inst]=b end
 	b[prop]=key
 	rememberTheme(inst,prop,key)
-	local c=themeColor(key)
-	if c then inst[prop]=c end
+	paintTheme(inst,prop,key)
 end
 
 local function unbind(inst,prop)
@@ -130,6 +262,8 @@ local function unbind(inst,prop)
 	if b then b[prop]=nil end
 	local owned=themeByInst[inst]
 	if owned and owned[prop] then owned[prop].dead=true owned[prop]=nil end
+	local grad=inst:FindFirstChild("PrismGradient")
+	if grad then grad:Destroy() end
 end
 
 local function paint(inst,prop,key,time)
@@ -137,9 +271,7 @@ local function paint(inst,prop,key,time)
 	if not b then b={} bindings[inst]=b end
 	b[prop]=key
 	rememberTheme(inst,prop,key)
-	local c=themeColor(key)
-	if not c then return end
-	if time then tween(inst,time,{[prop]=c}) else inst[prop]=c end
+	paintTheme(inst,prop,key,time)
 end
 
 local defaults={
@@ -218,7 +350,6 @@ local function cloneThemeColor(v)
 	return v
 end
 local function applyThemeColors()
-	local t=currentTheme
 	local i=1
 	while i<=#themeEntries do
 		local e=themeEntries[i]
@@ -227,10 +358,7 @@ local function applyThemeColors()
 			e.dead=true
 			table.remove(themeEntries,i)
 		else
-			local c=t[e.key]
-			if typeof(c)=="Color3" then
-				pcall(function() inst[e.prop]=c end)
-			end
+			paintTheme(inst,e.prop,e.key)
 			i+=1
 		end
 	end
@@ -2313,10 +2441,10 @@ function Prism:AddTheme(t)
 	local base={}
 	local source=Themes.Midnight or {}
 	for k,v in pairs(source)do
-		if k~="Name" then base[k]=cloneThemeColor(v) end
+		if k~="Name" and k~="Gradients" and k~="Gradient" then base[k]=cloneThemeColor(v) end
 	end
 	for k,v in pairs(t)do
-		if k~="Name" then base[k]=cloneThemeColor(v) end
+		if k~="Name" then base[k]=v end
 	end
 	return addTheme(t.Name,base)
 end
