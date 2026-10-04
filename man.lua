@@ -519,11 +519,12 @@ local Elements={}
 local function newRow(ctx,cfg,opt)
 	opt=opt or {}
 	local rightW=opt.rightWidth or 0
+	local flexRight=ctx.Narrow==true and rightW>=80
 	local row=create(opt.clickable and "TextButton" or "Frame",{Name="Row",Size=UDim2.new(1,0,0,0),AutomaticSize=AutoY,Theme={BackgroundColor3="Element"}},{corner(R_EL),stroke("Stroke",1,0.45)})
 	row.Parent=ctx.Content
 	local inner=create("Frame",{BackgroundTransparency=1,Size=UDim2.new(1,0,0,0),AutomaticSize=AutoY,Parent=row},{pad(12,11)})
 	if opt.column then inner:FindFirstChildOfClass("UIPadding").Parent=inner list(DirV,8).Parent=inner end
-	local left=create("Frame",{BackgroundTransparency=1,Size=UDim2.new(1,rightW>0 and -(rightW+12) or 0,0,0),AutomaticSize=AutoY,LayoutOrder=1,Parent=inner},{list(DirH,10,AlignL,AlignM)})
+	local left=create("Frame",{BackgroundTransparency=1,Size=flexRight and UDim2.new(0.5,-8,0,0) or UDim2.new(1,rightW>0 and -(rightW+12) or 0,0,0),AutomaticSize=AutoY,LayoutOrder=1,Parent=inner},{list(DirH,10,AlignL,AlignM)})
 	local icon=iconNode(cfg.Icon,20,"Sub",true)
 	if icon then icon.LayoutOrder=1 icon.Parent=left end
 	local textCol=create("Frame",{BackgroundTransparency=1,Size=UDim2.new(1,icon and -30 or 0,0,0),AutomaticSize=AutoY,LayoutOrder=2,Parent=left},{list(DirV,3)})
@@ -531,7 +532,7 @@ local function newRow(ctx,cfg,opt)
 	local desc=label(cfg.Desc or "",13,WMed,"Sub",{Size=UDim2.new(1,0,0,0),AutomaticSize=AutoY,TextWrapped=true,LayoutOrder=2,Visible=cfg.Desc~=nil and cfg.Desc~="",Parent=textCol})
 	local right
 	if rightW>0 then
-		right=create("Frame",{BackgroundTransparency=1,AnchorPoint=Vector2.new(1,0.5),Position=UDim2.new(1,0,0.5,0),Size=UDim2.fromOffset(rightW,opt.rightHeight or 30),Parent=inner})
+		right=create("Frame",{BackgroundTransparency=1,AnchorPoint=Vector2.new(1,0.5),Position=UDim2.new(1,0,0.5,0),Size=flexRight and UDim2.new(0.5,-6,0,opt.rightHeight or 30) or UDim2.fromOffset(rightW,opt.rightHeight or 30),Parent=inner})
 	end
 	local el={Row=row,Inner=inner,Left=left,Right=right,TitleLabel=title,DescLabel=desc,Title=cfg.Title or "",Desc=cfg.Desc,Locked=false,Kind=opt.kind,Flag=cfg.Flag}
 	local lockFrame,sizeBeforeLock
@@ -574,6 +575,8 @@ local function newRow(ctx,cfg,opt)
 	end
 	function el:SetVisible(v)
 		row.Visible=v and true or false
+		local c=self.Container
+		if c and c.Relayout then c:Relayout() end
 	end
 	function el:Highlight()
 		local s=row:FindFirstChildOfClass("UIStroke")
@@ -630,12 +633,14 @@ local function newRow(ctx,cfg,opt)
 	end
 	function el:Destroy()
 		row:Destroy()
-		if self.Container then
-			local i=table.find(self.Container.Elements,self)
-			if i then table.remove(self.Container.Elements,i) end
+		local container=self.Container
+		if container then
+			local i=table.find(container.Elements,self)
+			if i then table.remove(container.Elements,i) end
+			if container.Relayout then container:Relayout() end
 		end
-		if self.Flag and self.Container and self.Container.Window and self.Container.Window.Flags then
-			self.Container.Window.Flags[self.Flag]=nil
+		if self.Flag and container and container.Window and container.Window.Flags then
+			container.Window.Flags[self.Flag]=nil
 		end
 	end
 	if cfg.Locked then el:Lock(cfg.LockedTitle) end
@@ -644,14 +649,20 @@ end
 
 local function plainElement(frame)
 	local el={Row=frame}
-	function el:SetVisible(v)frame.Visible=v end
+	function el:SetVisible(v)
+		frame.Visible=v and true or false
+		local c=self.Container
+		if c and c.Relayout then c:Relayout() end
+	end
 	function el:Lock()end
 	function el:Unlock()end
 	function el:Destroy()
 		frame:Destroy()
-		if self.Container then
-			local i=table.find(self.Container.Elements,self)
-			if i then table.remove(self.Container.Elements,i) end
+		local container=self.Container
+		if container then
+			local i=table.find(container.Elements,self)
+			if i then table.remove(container.Elements,i) end
+			if container.Relayout then container:Relayout() end
 		end
 	end
 	return el
@@ -738,7 +749,7 @@ Elements.Slider=function(ctx,cfg)
 	local rightW=ctx.Window.Compact and 170 or 230
 	local el,row=newRow(ctx,cfg,{rightWidth=rightW,rightHeight=30,kind="Slider"})
 	local showBox=cfg.IsTextbox~=false
-	local boxW=showBox and 50 or 0
+	local boxW=showBox and (ctx.Narrow and 40 or 50) or 0
 	local startValue=cv.Default or cfg.Default
 	if startValue==nil and type(cfg.Value)=="number" then startValue=cfg.Value end
 	el.Value=clamp(startValue or min,min,max)
@@ -1558,40 +1569,103 @@ end
 Elements.Group=function(ctx,cfg)
 	cfg=cfg or {}
 	local gap=type(cfg.Gap)=="number" and cfg.Gap or 6
-	local frame=create("Frame",{Name="Group",BackgroundTransparency=1,Size=UDim2.new(1,0,0,0),AutomaticSize=AutoY,Parent=ctx.Content},{list(DirH,gap,AlignL,AlignT)})
+	-- No horizontal UIListLayout: it treats scale-width children as full parent width
+	-- and reports that overflow back through AbsoluteSize, so columns never fit.
+	local frame=create("Frame",{Name="Group",BackgroundTransparency=1,Size=UDim2.new(1,0,0,0),AutomaticSize=Enum.AutomaticSize.None,ClipsDescendants=false,Parent=ctx.Content})
 	local group=plainElement(frame)
 	group.Content=frame
 	group.Window=ctx.Window
 	group.Elements={}
 	group.Narrow=true
 	group.__container=true
-	-- Scale widths + horizontal UIListLayout overflow past the panel.
-	-- Size columns in offset from AbsoluteSize so they always fit.
+	local applying=false
+	local function contentWidth()
+		local scale=math.max(uiScale,0.001)
+		local width=frame.AbsoluteSize.X/scale
+		if width>=2 then return width end
+		local parent=frame.Parent
+		if not parent then return 0 end
+		local parentAbs=parent.AbsoluteSize.X
+		if parentAbs<2 then return 0 end
+		local parentLocal=parentAbs/scale
+		local left,right=0,0
+		local padInst=parent:FindFirstChildOfClass("UIPadding")
+		if padInst then
+			left=padInst.PaddingLeft.Offset+padInst.PaddingLeft.Scale*parentLocal
+			right=padInst.PaddingRight.Offset+padInst.PaddingRight.Scale*parentLocal
+		end
+		width=parentLocal-left-right
+		if parent:IsA("ScrollingFrame") and parent.ScrollBarThickness>0 and parent.ScrollingDirection~=Enum.ScrollingDirection.X then
+			width=width-parent.ScrollBarThickness
+		end
+		return width
+	end
 	local function relayout()
-		local n=#group.Elements
-		if n<=0 then return end
-		local width=frame.AbsoluteSize.X
-		if width<2 then return end
-		local localW=width/math.max(uiScale,0.001)
-		local cell=math.max(1,(localW-gap*(n-1))/n)
+		if applying then return end
+		local items={}
 		for _,e in ipairs(group.Elements)do
-			if e.Row and e.Row.Parent then
-				if e.Locked and e.Row.AutomaticSize==Enum.AutomaticSize.None then
-					e.Row.Size=UDim2.fromOffset(cell,math.max(e.Row.Size.Y.Offset,1))
-				else
-					e.Row.AutomaticSize=Enum.AutomaticSize.Y
-					e.Row.Size=UDim2.new(0,cell,0,0)
-				end
+			if e.Row and e.Row.Parent and e.Row.Visible then
+				table.insert(items,e)
+			elseif e.Row and e.Row.Parent then
+				e.Row.Size=UDim2.fromOffset(0,0)
 			end
 		end
+		local n=#items
+		if n<=0 then
+			frame.Size=UDim2.new(1,0,0,0)
+			return
+		end
+		local localW=contentWidth()
+		if localW<2 then return end
+		applying=true
+		local usable=math.max(0,localW-gap*(n-1))
+		local base=math.floor(usable/n)
+		local extra=math.floor(usable-base*n)
+		local x,maxH=0,0
+		for i,e in ipairs(items)do
+			local row=e.Row
+			local cell=math.max(1,base+(i<=extra and 1 or 0))
+			row.LayoutOrder=i
+			row.Position=UDim2.fromOffset(x,0)
+			if e.Locked and row.AutomaticSize==Enum.AutomaticSize.None then
+				row.Size=UDim2.fromOffset(cell,math.max(row.Size.Y.Offset,1))
+			else
+				row.AutomaticSize=Enum.AutomaticSize.Y
+				row.Size=UDim2.fromOffset(cell,0)
+			end
+			local h=row.AbsoluteSize.Y/math.max(uiScale,0.001)
+			if h>maxH then maxH=h end
+			x=x+cell+gap
+		end
+		if maxH<1 then maxH=36 end
+		frame.Size=UDim2.new(1,0,0,maxH)
+		applying=false
 	end
-	function group:OnAdd()
-		task.defer(relayout)
+	local pending=false
+	local function schedule()
+		if pending then return end
+		pending=true
+		task.defer(function()
+			pending=false
+			relayout()
+			task.defer(relayout)
+		end)
+	end
+	function group:OnAdd(el)
+		if el and el.Row then
+			el.Row:GetPropertyChangedSignal("AbsoluteSize"):Connect(schedule)
+		end
+		schedule()
 	end
 	function group:Relayout()
-		relayout()
+		schedule()
 	end
-	frame:GetPropertyChangedSignal("AbsoluteSize"):Connect(relayout)
+	frame:GetPropertyChangedSignal("AbsoluteSize"):Connect(schedule)
+	task.defer(function()
+		local parent=frame.Parent
+		if parent then parent:GetPropertyChangedSignal("AbsoluteSize"):Connect(schedule) end
+		schedule()
+	end)
 	return group
 end
 
