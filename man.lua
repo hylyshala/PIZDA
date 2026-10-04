@@ -162,19 +162,38 @@ local function copyText(text)
 	return (pcall(clipFn,text))
 end
 
+local themeGeneration=0
+local function themeAlive(inst)
+	local ok,parent=pcall(function()return inst.Parent end)
+	return ok and parent~=nil
+end
+local function cloneThemeColor(v)
+	if typeof(v)=="Color3" then return Color3.new(v.R,v.G,v.B) end
+	return v
+end
 local function setThemeInternal(name)
 	local t=Themes[name]
 	if not t then return false end
+	if currentTheme==t then
+		for _,fn in pairs(themeListeners)do safe(fn,name)end
+		return true
+	end
 	currentTheme=t
+	themeGeneration+=1
+	local dead={}
 	for inst,b in pairs(bindings)do
-		if inst:IsDescendantOf(game) then
-			for p,key in pairs(b)do
-				if t[key] then tween(inst,0.3,{[p]=t[key]}) end
+		if themeAlive(inst) then
+			local props={}
+			for prop,key in pairs(b)do
+				local c=t[key]
+				if typeof(c)=="Color3" then props[prop]=c end
 			end
+			if next(props) then tween(inst,0.3,props) end
 		else
-			bindings[inst]=nil
+			table.insert(dead,inst)
 		end
 	end
+	for _,inst in ipairs(dead)do bindings[inst]=nil end
 	for _,fn in pairs(themeListeners)do safe(fn,name)end
 	return true
 end
@@ -2246,11 +2265,12 @@ end
 function Prism:AddTheme(t)
 	if type(t)~="table" or not t.Name then return nil end
 	local base={}
-	for k,v in pairs(Themes.Midnight)do
-		if k~="Name" then base[k]=v end
+	local source=Themes.Midnight or {}
+	for k,v in pairs(source)do
+		if k~="Name" then base[k]=cloneThemeColor(v) end
 	end
 	for k,v in pairs(t)do
-		if k~="Name" then base[k]=v end
+		if k~="Name" then base[k]=cloneThemeColor(v) end
 	end
 	return addTheme(t.Name,base)
 end
@@ -2282,8 +2302,22 @@ function Prism:SetTitle(name,text)return runtimeCall(name,"SetTitle",text)end
 function Prism:SetDesc(name,text)return runtimeCall(name,"SetDesc",text)end
 function Prism:Set(name,value)return runtimeCall(name,"Set",value)end
 function Prism:SetTheme(name)return setThemeInternal(name)end
-function Prism:GetThemes()return Themes end
-function Prism:GetCurrentTheme()return currentTheme.Name end
+function Prism:GetThemes()
+	local copy={}
+	for name,theme in pairs(Themes)do
+		local row={}
+		for k,v in pairs(theme)do row[k]=cloneThemeColor(v) end
+		copy[name]=row
+	end
+	return copy
+end
+function Prism:GetThemeNames()
+	local names={}
+	for name in pairs(Themes)do table.insert(names,name) end
+	table.sort(names)
+	return names
+end
+function Prism:GetCurrentTheme()return currentTheme and currentTheme.Name or "Midnight" end
 function Prism:OnThemeChange(fn)
 	local id=HttpService:GenerateGUID(false)
 	themeListeners[id]=fn
